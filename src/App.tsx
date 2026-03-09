@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { motion } from 'motion/react';
-import { Diamond, Heart, ShieldAlert, Settings, Pause, Play, RefreshCw, MonitorPlay, Vibrate, Home, Trophy, Send, Volume2 } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
+import { Diamond, Heart, ShieldAlert, Settings, Pause, Play, RefreshCw, MonitorPlay, Vibrate, Home, Trophy, Send, Volume2, Award } from 'lucide-react';
 
-type GameState = 'LOADING' | 'NAME_INPUT' | 'MENU' | 'PLAYING' | 'BOSS_TRANSITION' | 'BOSS' | 'GAME_OVER' | 'VICTORY' | 'LEADERBOARD' | 'SETTINGS';
+type GameState = 'LOADING' | 'NAME_INPUT' | 'MENU' | 'PLAYING' | 'BOSS_TRANSITION' | 'BOSS' | 'GAME_OVER' | 'VICTORY' | 'CREDITS' | 'LEADERBOARD' | 'SETTINGS' | 'ACHIEVEMENTS' | 'CHANGELOG';
+
+const GAME_VERSION = '1.1.0';
 
 interface Boss {
   x: number;
@@ -47,7 +49,7 @@ export default function Game() {
   const [gameState, setGameState] = useState<GameState>('LOADING');
   const [score, setScore] = useState(0);
   const [lives, setLives] = useState(3);
-  const [highScore, setHighScore] = useState(0);
+  const [highScore, setHighScore] = useState(() => Number(localStorage.getItem('highScore')) || 0);
   const [timeLeft, setTimeLeft] = useState(120);
   const [bossHealth, setBossHealth] = useState(1000);
   const [maxBossHealth, setMaxBossHealth] = useState(1000);
@@ -64,6 +66,26 @@ export default function Game() {
   const [enableBetterEffects, setEnableBetterEffects] = useState(true); // QoL 6: Better Effects Toggle
   const [diamondCurrency, setDiamondCurrency] = useState(() => Number(localStorage.getItem('diamondCurrency')) || 0);
   const [musicVolume, setMusicVolume] = useState(() => parseFloat(localStorage.getItem('musicVolume') ?? '0.5'));
+  const [achievements, setAchievements] = useState<string[]>(() => {
+    const saved = localStorage.getItem('achievements');
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [achievementNotification, setAchievementNotification] = useState<{ id: string, title: string, desc: string } | null>(null);
+
+  const ACHIEVEMENTS_LIST = [
+    { id: 'perfect_run', title: 'Perfect Run', desc: 'Beat the game with 80+ points, no damage taken, and defeat the boss in under 2 minutes.' },
+    { id: 'gold_digger', title: 'Gold Digger', desc: 'Survive the Phase 3 "Line of Gold Diamonds" without taking a single hit.' },
+    { id: '80_club', title: 'The 80 Club', desc: 'Reach the boss phase with 80 points or more.' },
+    { id: 'ghost_cave', title: 'Ghost in the Cave', desc: 'Complete the first 60 seconds without touching a single rock or hazard.' },
+    { id: 'too_blue', title: 'Too Blue', desc: 'Collect at least 10 Deep Blue Diamonds during the collection phase.' },
+    { id: 'true_blue', title: 'True Blue', desc: 'Collect 15 Light Blue diamonds in a single run.' },
+    { id: 'perfect_polish', title: 'Perfect Polish', desc: 'Finish the 2-minute timer without ever touching a Gold or Red diamond.' },
+    { id: 'rock_bottom', title: 'Rock Bottom', desc: 'Survive the 2-minute timer with only 1 heart remaining.' },
+    { id: 'unstoppable_diamantis', title: 'Unstoppable Diamantis', desc: 'Reach Phase 3 of the Kermelis fight without losing any health.' },
+    { id: 'six_seven', title: 'SIX SEVENNN', desc: 'Trigger the secret "67" easter egg.' },
+    { id: 'pacifist', title: 'The Pacifist', desc: 'Reach the boss fight with 0 points (only dodging, no collecting).' },
+    { id: 'too_blue_to_be_true', title: 'Too Blue To Be True', desc: 'Unlock all other achievements and achieve a high score of over 100 points.' },
+  ];
 
   // Game loop refs
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -80,6 +102,21 @@ export default function Game() {
   const bossRef = useRef<Boss | null>(null);
   const easterEgg67TimerRef = useRef<number>(0);
   const hasTriggered67Ref = useRef<boolean>(false);
+  const achievementsRef = useRef<string[]>(achievements);
+  const runStatsRef = useRef({
+    tookDamageOverall: false,
+    tookDamageFirst60s: false,
+    tookDamagePhase3: false,
+    deepBlueCount: 0,
+    lightBlueCount: 0,
+    bossDuration: 0,
+    reachedPhase3: false,
+    touchedGoldOrRed: false,
+    lostHealthInBoss: false,
+    lives: 3,
+    score: 0,
+  });
+  const unlockAchievementRef = useRef((id: string) => {});
   
   // Refs for state accessed inside the game loop
   const fpsLimitRef = useRef(fpsLimit);
@@ -91,6 +128,39 @@ export default function Game() {
   useEffect(() => { fpsLimitRef.current = fpsLimit; }, [fpsLimit]);
   useEffect(() => { enableScreenShakeRef.current = enableScreenShake; }, [enableScreenShake]);
   useEffect(() => { enableBetterEffectsRef.current = enableBetterEffects; }, [enableBetterEffects]);
+  useEffect(() => { achievementsRef.current = achievements; }, [achievements]);
+
+  useEffect(() => {
+    localStorage.setItem('highScore', highScore.toString());
+    
+    if (highScore > 100) {
+      const allOtherIds = ACHIEVEMENTS_LIST.map(a => a.id).filter(id => id !== 'too_blue_to_be_true');
+      const hasAllOthers = allOtherIds.every(id => achievements.includes(id));
+      if (hasAllOthers) {
+        unlockAchievementRef.current('too_blue_to_be_true');
+      }
+    }
+  }, [highScore, achievements]);
+
+  useEffect(() => {
+    unlockAchievementRef.current = (id: string) => {
+      if (achievementsRef.current.includes(id)) return;
+      achievementsRef.current = [...achievementsRef.current, id];
+      setAchievements(prev => {
+        if (prev.includes(id)) return prev;
+        const newAchievements = [...prev, id];
+        localStorage.setItem('achievements', JSON.stringify(newAchievements));
+        
+        const ach = ACHIEVEMENTS_LIST.find(a => a.id === id);
+        if (ach) {
+          setAchievementNotification(ach);
+          setTimeout(() => setAchievementNotification(null), 4000);
+        }
+        
+        return newAchievements;
+      });
+    };
+  }, []);
   
   useEffect(() => {
     localStorage.setItem('musicVolume', musicVolume.toString());
@@ -101,7 +171,7 @@ export default function Game() {
 
   useEffect(() => {
     if (!audioRef.current) return;
-    if (gameState === 'MENU' || gameState === 'SETTINGS' || gameState === 'LEADERBOARD') {
+    if (gameState === 'MENU' || gameState === 'SETTINGS' || gameState === 'LEADERBOARD' || gameState === 'VICTORY' || gameState === 'CREDITS') {
       audioRef.current.play().catch(e => console.log('Audio autoplay prevented:', e));
     } else {
       audioRef.current.pause();
@@ -123,7 +193,7 @@ export default function Game() {
   // QoL 4: Auto-Pause on Window Blur
   useEffect(() => {
     const handleBlur = () => {
-      if (gameStateRef.current === 'PLAYING') {
+      if (gameStateRef.current === 'PLAYING' || gameStateRef.current === 'BOSS' || gameStateRef.current === 'BOSS_TRANSITION') {
         setIsPaused(true);
       }
     };
@@ -134,10 +204,14 @@ export default function Game() {
   useEffect(() => {
     if (gameState === 'LOADING') {
       const timer = setTimeout(() => {
-        if (localStorage.getItem('playerName')) {
-          setGameState('MENU');
-        } else {
+        if (!localStorage.getItem('playerName')) {
+          localStorage.setItem('gameVersion', GAME_VERSION);
           setGameState('NAME_INPUT');
+        } else if (localStorage.getItem('gameVersion') !== GAME_VERSION) {
+          setGameState('CHANGELOG');
+          localStorage.setItem('gameVersion', GAME_VERSION);
+        } else {
+          setGameState('MENU');
         }
       }, 3000);
       return () => clearTimeout(timer);
@@ -178,6 +252,19 @@ export default function Game() {
     shakeTimerRef.current = 0;
     easterEgg67TimerRef.current = 0;
     hasTriggered67Ref.current = false;
+    runStatsRef.current = {
+      tookDamageOverall: false,
+      tookDamageFirst60s: false,
+      tookDamagePhase3: false,
+      deepBlueCount: 0,
+      lightBlueCount: 0,
+      bossDuration: 0,
+      reachedPhase3: false,
+      touchedGoldOrRed: false,
+      lostHealthInBoss: false,
+      lives: 3,
+      score: 0,
+    };
     gameTimerRef.current = 120;
     setTimeLeft(120);
     bossRef.current = null;
@@ -196,7 +283,7 @@ export default function Game() {
     const handleKeyDown = (e: KeyboardEvent) => {
       keysRef.current[e.code] = true;
       
-      if ((e.code === 'Escape' || e.code === 'KeyP') && gameStateRef.current === 'PLAYING') {
+      if ((e.code === 'Escape' || e.code === 'KeyP') && (gameStateRef.current === 'PLAYING' || gameStateRef.current === 'BOSS' || gameStateRef.current === 'BOSS_TRANSITION')) {
         setIsPaused(prev => !prev);
       }
       
@@ -481,7 +568,7 @@ export default function Game() {
 
       drawCaveBackground(now);
 
-      if (gameStateRef.current === 'LOADING' || gameStateRef.current === 'GAME_OVER' || gameStateRef.current === 'VICTORY' || gameStateRef.current === 'LEADERBOARD' || gameStateRef.current === 'NAME_INPUT') {
+      if (gameStateRef.current === 'LOADING' || gameStateRef.current === 'GAME_OVER' || gameStateRef.current === 'VICTORY' || gameStateRef.current === 'CREDITS' || gameStateRef.current === 'LEADERBOARD' || gameStateRef.current === 'NAME_INPUT') {
         ctx.restore(); // Restore shake translation
         animationFrameId = requestAnimationFrame(update);
         return;
@@ -491,7 +578,7 @@ export default function Game() {
 
       if (!isPausedRef.current) {
         // --- GAME LOGIC ---
-        if (gameStateRef.current === 'MENU') {
+        if (gameStateRef.current === 'MENU' || gameStateRef.current === 'SETTINGS' || gameStateRef.current === 'ACHIEVEMENTS' || gameStateRef.current === 'CHANGELOG') {
           // Decorative menu diamonds
           if (Math.random() < 0.08 * timeScale) {
             const isLeft = Math.random() > 0.5;
@@ -521,6 +608,11 @@ export default function Game() {
             gameTimerRef.current -= elapsed / 1000;
           if (gameTimerRef.current <= 0) {
             gameTimerRef.current = 0;
+            if (runStatsRef.current.score >= 80) unlockAchievementRef.current('80_club');
+            if (runStatsRef.current.lives === 1) unlockAchievementRef.current('rock_bottom');
+            if (runStatsRef.current.score === 0) unlockAchievementRef.current('pacifist');
+            if (!runStatsRef.current.touchedGoldOrRed) unlockAchievementRef.current('perfect_polish');
+            runStatsRef.current.bossDuration = 0;
             setGameState('BOSS_TRANSITION');
             // Initialize Boss Kermelis
             const bossMaxHp = 3000 + score * 7.5; // Power scales with diamonds (Buffed 50%)
@@ -542,6 +634,9 @@ export default function Game() {
           // Update UI timer every second
           if (Math.floor(gameTimerRef.current) !== timeLeft) {
             setTimeLeft(Math.floor(gameTimerRef.current));
+            if (Math.floor(gameTimerRef.current) === 60 && !runStatsRef.current.tookDamageFirst60s) {
+              unlockAchievementRef.current('ghost_cave');
+            }
           }
         }
 
@@ -586,12 +681,19 @@ export default function Game() {
 
         if (gameStateRef.current === 'PLAYING') {
           spawnTimerRef.current += elapsed;
-          const spawnRate = Math.max(200, 1000 - difficultyRef.current * 40); 
+          let spawnRate = Math.max(200, 1000 - difficultyRef.current * 40); 
+          if (gameTimerRef.current > 60 && gameTimerRef.current <= 120) {
+            spawnRate *= 0.95; // Buff spawn rate by 5%
+          }
           const speedMultiplier = gameTimerRef.current <= 30 ? 2.0 : (gameTimerRef.current <= 60 ? 1.5 : 1); // Faster at 1 min, fastest at 30s
           
           if (spawnTimerRef.current > spawnRate) {
             spawnTimerRef.current = 0;
-            const isDiamond = Math.random() > 0.6; 
+            let diamondChance = 0.51; // Buffed by 11% total
+            if (gameTimerRef.current <= 45) {
+              diamondChance += 0.08; // Buff diamond spawn rate by 8%
+            }
+            const isDiamond = Math.random() < diamondChance; 
             
             let color = '#38bdf8';
             let points = 0;
@@ -599,10 +701,10 @@ export default function Game() {
 
             if (isDiamond) {
               const rand = Math.random();
-              if (rand < 0.1) { color = '#ef4444'; damage = 3; } // Red (3 dmg)
-              else if (rand < 0.25) { color = '#fcd34d'; damage = 2; } // Gold (2 dmg)
-              else if (rand < 0.5) { color = '#1d4ed8'; points = 5; } // Deep Blue
-              else if (rand < 0.75) { color = '#38bdf8'; points = 3; } // Normal Blue
+              if (rand < 0.078) { color = '#ef4444'; damage = 3; } // Red (3 dmg)
+              else if (rand < 0.196) { color = '#fcd34d'; damage = 2; } // Gold (2 dmg)
+              else if (rand < 0.431) { color = '#1d4ed8'; points = 5; } // Deep Blue
+              else if (rand < 0.686) { color = '#38bdf8'; points = 3; } // Normal Blue
               else { color = '#bae6fd'; points = 1; } // Light Blue
             }
             
@@ -618,8 +720,17 @@ export default function Game() {
                 speed *= 1.2;
               }
             } else {
+              speed *= 1.05; // Rocks fall 5% faster
+              if (gameTimerRef.current > 60 && gameTimerRef.current <= 120) {
+                speed *= 1.3; // Buff rocks falling speed by 30%
+              }
               if (radius > 35) {
                 speed *= 1.3; // Big rocks fall faster
+              }
+              if (radius < 25) {
+                damage = 0.5; // Very small rocks deal 0.5 hearts
+              } else {
+                damage = 1;
               }
             }
             
@@ -641,12 +752,14 @@ export default function Game() {
 
         // Boss Logic
         if (gameStateRef.current === 'BOSS_TRANSITION' && bossRef.current) {
+          runStatsRef.current.bossDuration += elapsed;
           const boss = bossRef.current;
           boss.y += 2 * timeScale;
           if (boss.y >= 50) {
             setGameState('BOSS');
           }
         } else if (gameStateRef.current === 'BOSS' && bossRef.current) {
+          runStatsRef.current.bossDuration += elapsed;
           const boss = bossRef.current;
           boss.timer += elapsed;
           
@@ -660,6 +773,10 @@ export default function Game() {
           if (boss.health <= boss.maxHealth * 0.25 && boss.phase === 2) {
             boss.phase = 3;
             boss.dx *= 1.08; // 8% faster
+            runStatsRef.current.reachedPhase3 = true;
+            if (!runStatsRef.current.lostHealthInBoss) {
+              unlockAchievementRef.current('unstoppable_diamantis');
+            }
           }
 
           // Boss Movement
@@ -702,7 +819,7 @@ export default function Game() {
                   x: 100 + i * ((canvas.width - 200) / 4),
                   y: boss.y + boss.height,
                   radius,
-                  speed: 8,
+                  speed: 8 * 1.07,
                   rotation: 0,
                   rotSpeed: 0.1,
                   type: 'rock',
@@ -717,7 +834,7 @@ export default function Game() {
                   x: boss.x + boss.width / 2 + (Math.random() - 0.5) * 100,
                   y: boss.y + boss.height,
                   radius,
-                  speed: 5 + Math.random() * 3,
+                  speed: (5 + Math.random() * 3) * 1.07,
                   rotation: 0,
                   rotSpeed: (Math.random() - 0.5) * 0.2,
                   type: 'rock',
@@ -731,7 +848,7 @@ export default function Game() {
                 x: boss.x + boss.width / 2,
                 y: boss.y + boss.height,
                 radius,
-                speed: 12,
+                speed: 12 * 1.07,
                 rotation: 0,
                 rotSpeed: 0.2,
                 type: 'rock',
@@ -750,7 +867,7 @@ export default function Game() {
                 rotSpeed: 0.1,
                 type: 'diamond',
                 color: isRed ? '#ef4444' : '#fcd34d',
-                damage: isRed ? 3 : 1
+                damage: isRed ? 3 : 2
               });
             } else {
               boss.state = 'special'; // Giant rock
@@ -759,7 +876,7 @@ export default function Game() {
                 x: boss.x + boss.width / 2,
                 y: boss.y + boss.height,
                 radius,
-                speed: 5, // Faster giant rock
+                speed: 5 * 1.07, // Faster giant rock
                 rotation: 0,
                 rotSpeed: 0.05,
                 type: 'rock',
@@ -803,6 +920,17 @@ export default function Game() {
               createParticles(p.x, p.y, boss.health <= boss.maxHealth * 0.25 ? '#fcd34d' : '#ef4444', enableBetterEffectsRef.current ? 10 : 5);
               
               if (boss.health <= 0) {
+                const bossDuration = runStatsRef.current.bossDuration;
+                if (score >= 80 && !runStatsRef.current.tookDamageOverall && bossDuration < 120000) {
+                  unlockAchievementRef.current('perfect_run');
+                }
+                if (runStatsRef.current.reachedPhase3 && !runStatsRef.current.tookDamagePhase3) {
+                  unlockAchievementRef.current('gold_digger');
+                }
+                if (!runStatsRef.current.touchedGoldOrRed) {
+                  unlockAchievementRef.current('perfect_polish');
+                }
+                
                 setGameState('VICTORY');
                 setScore(s => s + 5000);
               }
@@ -826,10 +954,12 @@ export default function Game() {
             if (entity.type === 'diamond' && !entity.damage) {
               setScore(s => {
                 const newScore = s + (entity.points || 1);
+                runStatsRef.current.score = newScore;
                 difficultyRef.current = 1 + Math.floor(newScore / 150) * 0.5;
                 if (newScore === 67 && !hasTriggered67Ref.current) {
                   hasTriggered67Ref.current = true;
                   easterEgg67TimerRef.current = 3000;
+                  unlockAchievementRef.current('six_seven');
                 }
                 return newScore;
               });
@@ -838,13 +968,41 @@ export default function Game() {
                 localStorage.setItem('diamondCurrency', newD.toString());
                 return newD;
               });
+              
+              if (entity.color === '#1d4ed8') {
+                runStatsRef.current.deepBlueCount++;
+                if (runStatsRef.current.deepBlueCount >= 10 && gameStateRef.current === 'PLAYING') {
+                  unlockAchievementRef.current('too_blue');
+                }
+              } else if (entity.color === '#38bdf8') {
+                runStatsRef.current.lightBlueCount++;
+                if (runStatsRef.current.lightBlueCount >= 15) {
+                  unlockAchievementRef.current('true_blue');
+                }
+              }
+              
               createParticles(entity.x, entity.y, entity.color || '#38bdf8', 20);
               entitiesRef.current.splice(i, 1);
               continue;
             } else if (player.invincibleTimer <= 0) {
+              runStatsRef.current.tookDamageOverall = true;
+              if (gameTimerRef.current > 60) {
+                runStatsRef.current.tookDamageFirst60s = true;
+              }
+              if (gameStateRef.current === 'BOSS') {
+                runStatsRef.current.lostHealthInBoss = true;
+                if (bossRef.current && bossRef.current.health <= bossRef.current.maxHealth * 0.25) {
+                  runStatsRef.current.tookDamagePhase3 = true;
+                }
+              }
+              if (entity.color === '#fcd34d' || entity.color === '#ef4444') {
+                runStatsRef.current.touchedGoldOrRed = true;
+              }
+              
               const dmg = entity.damage || 1;
               setLives(l => {
-                const newLives = l - dmg;
+                const newLives = Math.max(0, l - dmg);
+                runStatsRef.current.lives = newLives;
                 if (newLives <= 0) {
                   setGameState('GAME_OVER');
                 }
@@ -1169,6 +1327,46 @@ export default function Game() {
 
   return (
     <div className="relative w-full h-screen overflow-hidden bg-slate-950 font-sans text-slate-100 selection:bg-blue-500/30">
+      {/* Achievement Notification Popup */}
+      <AnimatePresence>
+        {achievementNotification && (
+          <motion.div
+            initial={{ opacity: 0, y: 50, scale: 0.9 }}
+            animate={{ opacity: 1, y: -20, scale: 1 }}
+            exit={{ opacity: 0, y: 50, scale: 0.9 }}
+            className={`absolute bottom-0 right-4 z-[100] p-4 rounded-lg shadow-[0_10px_40px_rgba(0,0,0,0.8)] flex items-center gap-4 min-w-[300px] ${
+              achievementNotification.id === 'too_blue_to_be_true'
+                ? 'bg-gradient-to-r from-[#0f172a] to-[#1e3a8a] border border-[#38bdf8] shadow-[0_0_30px_rgba(56,189,248,0.5)]'
+                : 'bg-[#1a1a1a] border border-[#333]'
+            }`}
+          >
+            <div className={`p-3 rounded-md border ${
+              achievementNotification.id === 'too_blue_to_be_true'
+                ? 'bg-[#1e40af]/50 border-[#38bdf8]'
+                : 'bg-[#2a2a2a] border-[#444]'
+            }`}>
+              <Diamond className={`w-8 h-8 ${
+                achievementNotification.id === 'too_blue_to_be_true'
+                  ? 'text-[#38bdf8] fill-[#38bdf8] drop-shadow-[0_0_10px_rgba(56,189,248,0.8)]'
+                  : 'text-[#38bdf8] fill-[#38bdf8]'
+              }`} />
+            </div>
+            <div>
+              <div className={`text-xs font-semibold uppercase tracking-wider mb-1 ${
+                achievementNotification.id === 'too_blue_to_be_true' ? 'text-[#bae6fd]' : 'text-[#888]'
+              }`}>
+                {achievementNotification.id === 'too_blue_to_be_true' ? 'Legendary Achievement Unlocked' : 'Achievement Unlocked'}
+              </div>
+              <h3 className={`font-medium text-base leading-tight ${
+                achievementNotification.id === 'too_blue_to_be_true' ? 'text-white font-bold drop-shadow-md' : 'text-white'
+              }`}>
+                {achievementNotification.title}
+              </h3>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {gameState === 'LOADING' && (
         <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950 z-50">
           <motion.div
@@ -1229,14 +1427,19 @@ export default function Game() {
 
           <div className="flex flex-col items-end gap-4 pointer-events-auto">
             <div className="flex gap-2 bg-slate-900/80 p-3 rounded-2xl backdrop-blur-md border-b-4 border-slate-800 shadow-2xl skew-x-[-5deg]">
-              {[...Array(3)].map((_, i) => (
-                <Heart
-                  key={i}
-                  className={`w-8 h-8 skew-x-[5deg] transition-all duration-300 ${
-                    i < lives ? 'text-rose-500 fill-rose-500 drop-shadow-[0_0_8px_rgba(244,63,94,0.6)]' : 'text-slate-800 fill-slate-900'
-                  }`}
-                />
-              ))}
+              {[...Array(3)].map((_, i) => {
+                const isFull = lives >= i + 1;
+                const isHalf = lives > i && lives < i + 1;
+                return (
+                  <div key={i} className="relative w-8 h-8 skew-x-[5deg]">
+                    <Heart className="absolute inset-0 w-full h-full text-slate-800 fill-slate-900 transition-all duration-300" />
+                    <Heart
+                      className={`absolute inset-0 w-full h-full text-rose-500 fill-rose-500 drop-shadow-[0_0_8px_rgba(244,63,94,0.6)] transition-all duration-300 ${isFull || isHalf ? 'opacity-100' : 'opacity-0'}`}
+                      style={{ clipPath: isFull ? 'inset(0 0 0 0)' : isHalf ? 'inset(0 50% 0 0)' : 'inset(0 100% 0 0)' }}
+                    />
+                  </div>
+                );
+              })}
             </div>
             
             <div className="flex gap-2">
@@ -1307,8 +1510,54 @@ export default function Game() {
       )}
 
       {/* Stylish Main Menu */}
+      {gameState === 'CHANGELOG' && (
+        <div className="absolute inset-0 flex items-center justify-center bg-slate-950/90 backdrop-blur-md z-50 p-6">
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.9, y: 20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            className="bg-slate-900/90 p-8 rounded-3xl shadow-[0_0_50px_rgba(0,0,0,0.5)] border-t border-slate-700 max-w-2xl w-full backdrop-blur-xl flex flex-col max-h-[90vh]"
+          >
+            <div className="flex items-center justify-center gap-4 mb-8">
+              <RefreshCw className="w-10 h-10 text-sky-400" />
+              <h2 className="text-4xl font-black text-transparent bg-clip-text bg-gradient-to-b from-sky-300 to-blue-600 tracking-tighter italic drop-shadow-lg">
+                WHAT'S NEW
+              </h2>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto pr-2 space-y-6 custom-scrollbar text-slate-300">
+              <div className="space-y-2">
+                <h3 className="text-xl font-bold text-white flex items-center gap-2">
+                  <span className="bg-sky-500/20 text-sky-400 px-2 py-1 rounded text-sm">v1.1.0</span>
+                  The Balance Update
+                </h3>
+                <ul className="list-disc list-inside space-y-2 ml-2">
+                  <li><strong className="text-sky-300">Half-Heart UI:</strong> You can now see exactly when you take 0.5 damage from small rocks!</li>
+                  <li><strong className="text-sky-300">Phase 1 Buffs:</strong> Rock falling speed and spawn rates have been increased during the 2:00 to 1:00 mark.</li>
+                  <li><strong className="text-sky-300">Diamond Drops:</strong> Overall diamond spawn rates are up. Light Blue (+6%), Normal Blue (+3%), Deep Blue (+2%).</li>
+                  <li><strong className="text-sky-300">Bug Fixes:</strong> Resolved issue where health could drop below 0.</li>
+                </ul>
+              </div>
+            </div>
+
+            <button 
+              onClick={() => setGameState('MENU')}
+              className="mt-8 w-full py-4 rounded-xl bg-gradient-to-r from-sky-500 to-blue-600 text-white font-black text-xl tracking-widest hover:from-sky-400 hover:to-blue-500 transition-all shadow-[0_0_20px_rgba(56,189,248,0.4)] hover:shadow-[0_0_30px_rgba(56,189,248,0.6)] active:scale-95"
+            >
+              AWESOME, LET'S PLAY!
+            </button>
+          </motion.div>
+        </div>
+      )}
+
       {gameState === 'MENU' && (
         <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950/40 backdrop-blur-sm z-50">
+          <button 
+            onClick={() => setGameState('ACHIEVEMENTS')}
+            className="absolute top-6 left-6 flex items-center gap-3 bg-slate-900/80 hover:bg-slate-800 backdrop-blur-md px-5 py-3 rounded-2xl border-b-4 border-slate-800 hover:border-slate-700 shadow-2xl skew-x-[-5deg] transition-all active:translate-y-1 active:border-b-0"
+          >
+            <Award className="w-6 h-6 text-yellow-400 skew-x-[5deg]" />
+            <span className="text-xl font-black text-white tracking-tighter skew-x-[5deg]">Achievements</span>
+          </button>
           <div className="absolute top-6 right-6 flex items-center gap-3 bg-slate-900/80 backdrop-blur-md px-5 py-3 rounded-2xl border-b-4 border-slate-800 shadow-2xl skew-x-[-5deg]">
             <Diamond className="w-6 h-6 text-sky-400 skew-x-[5deg]" />
             <span className="text-2xl font-black text-white tracking-tighter skew-x-[5deg]">{diamondCurrency}</span>
@@ -1443,17 +1692,133 @@ export default function Game() {
             )}
 
             <button
-              onClick={initGame}
-              className="group relative w-full py-4 bg-blue-600 hover:bg-blue-500 text-white font-black text-xl uppercase tracking-widest skew-x-[-10deg] transition-all hover:scale-105 shadow-[0_0_20px_rgba(37,99,235,0.4)] border-b-4 border-blue-900 hover:border-blue-400 active:border-b-0 active:translate-y-1 mb-4 flex items-center justify-center gap-3"
+              onClick={() => setGameState('CREDITS')}
+              className="group relative w-full py-4 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xl uppercase tracking-widest skew-x-[-10deg] transition-all hover:scale-105 shadow-[0_0_20px_rgba(16,185,129,0.4)] border-b-4 border-emerald-900 hover:border-emerald-400 active:border-b-0 active:translate-y-1 mb-4 flex items-center justify-center gap-3"
             >
-              <RefreshCw className="w-6 h-6 skew-x-[10deg]" /> 
-              <span className="block skew-x-[10deg]">Play Again</span>
+              <Play className="w-6 h-6 skew-x-[10deg]" /> 
+              <span className="block skew-x-[10deg]">View Credits</span>
             </button>
             <button
-              onClick={() => setGameState('MENU')}
+              onClick={initGame}
               className="w-full py-4 px-6 bg-transparent hover:bg-slate-800 text-slate-500 hover:text-white rounded-xl font-black uppercase tracking-widest text-sm transition-all"
             >
-              Main Menu
+              Play Again
+            </button>
+          </motion.div>
+        </div>
+      )}
+
+      {/* Credits Screen */}
+      {gameState === 'CREDITS' && (
+        <div className="absolute inset-0 bg-black z-50 overflow-hidden flex flex-col items-center justify-center">
+          <motion.div
+            initial={{ y: '100vh' }}
+            animate={{ y: '-150vh' }}
+            transition={{ duration: 25, ease: 'linear' }}
+            onAnimationComplete={() => setGameState('MENU')}
+            className="text-center space-y-20 w-full max-w-2xl px-8 absolute"
+          >
+            <div>
+              <h2 className="text-6xl font-black text-transparent bg-clip-text bg-gradient-to-b from-emerald-400 to-emerald-700 tracking-tighter italic mb-4 drop-shadow-[0_0_30px_rgba(16,185,129,0.3)]">
+                VICTORY
+              </h2>
+              <p className="text-slate-400 font-bold tracking-widest text-lg uppercase">Thanks for playing</p>
+            </div>
+
+            <div className="space-y-6">
+              <h3 className="text-sky-400 font-black tracking-widest uppercase text-sm">Made by</h3>
+              <p className="text-white text-4xl font-black tracking-tight">EpalGames</p>
+            </div>
+
+            <div className="space-y-6">
+              <h3 className="text-sky-400 font-black tracking-widest uppercase text-sm">Game Developers</h3>
+              <p className="text-slate-200 text-2xl font-bold">Nikos Ganas</p>
+              <p className="text-slate-200 text-2xl font-bold">Axilleas Polyzos</p>
+              <p className="text-slate-200 text-2xl font-bold">Nikolas Galanis</p>
+            </div>
+
+            <div className="space-y-6">
+              <h3 className="text-sky-400 font-black tracking-widest uppercase text-sm">Art & Design</h3>
+              <p className="text-slate-300 text-xl font-medium">EpalGames Art Team</p>
+            </div>
+
+            <div className="space-y-6">
+              <h3 className="text-sky-400 font-black tracking-widest uppercase text-sm">Music & Sound</h3>
+              <p className="text-slate-300 text-xl font-medium">EpalGames Audio</p>
+            </div>
+            
+            <div className="space-y-6">
+              <h3 className="text-sky-400 font-black tracking-widest uppercase text-sm">Quality Assurance</h3>
+              <p className="text-slate-300 text-xl font-medium">The Playtesters</p>
+            </div>
+
+            <div className="space-y-6">
+              <h3 className="text-sky-400 font-black tracking-widest uppercase text-sm">Special Thanks</h3>
+              <p className="text-slate-300 text-xl font-medium">You, the Player</p>
+            </div>
+            
+            <div className="pt-32 pb-64">
+              <Diamond className="w-16 h-16 text-sky-400 mx-auto animate-pulse drop-shadow-[0_0_20px_rgba(56,189,248,0.5)]" />
+            </div>
+          </motion.div>
+          
+          <button
+            onClick={() => setGameState('MENU')}
+            className="absolute bottom-8 right-8 text-slate-500 hover:text-white uppercase tracking-widest text-xs font-bold transition-colors z-10 bg-black/50 px-4 py-2 rounded-lg backdrop-blur-sm"
+          >
+            Skip Credits
+          </button>
+        </div>
+      )}
+
+      {/* Achievements Screen */}
+      {gameState === 'ACHIEVEMENTS' && (
+        <div className="absolute inset-0 flex items-center justify-center bg-slate-950/90 backdrop-blur-md z-50 p-6">
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.9, y: 20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            className="bg-slate-900/90 p-8 rounded-3xl shadow-[0_0_50px_rgba(0,0,0,0.5)] border-t border-slate-700 max-w-2xl w-full backdrop-blur-xl flex flex-col max-h-[90vh]"
+          >
+            <div className="flex items-center justify-center gap-4 mb-8">
+              <Award className="w-10 h-10 text-yellow-400" />
+              <h2 className="text-4xl font-black text-transparent bg-clip-text bg-gradient-to-b from-yellow-400 to-yellow-600 tracking-tighter italic drop-shadow-lg">
+                ACHIEVEMENTS
+              </h2>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto pr-2 space-y-4 custom-scrollbar">
+              {ACHIEVEMENTS_LIST.map((ach) => {
+                const isUnlocked = achievements.includes(ach.id);
+                const isSecret = ach.id === 'too_blue_to_be_true' && !isUnlocked;
+                const displayTitle = isSecret ? '???' : ach.title;
+                const displayDesc = isSecret ? 'Unlock all other achievements and achieve a high score of over 100 points.' : ach.desc;
+                
+                return (
+                  <div 
+                    key={ach.id} 
+                    className={`p-4 rounded-2xl border-l-4 flex items-center gap-4 transition-all ${
+                      isUnlocked 
+                        ? (ach.id === 'too_blue_to_be_true' ? 'bg-gradient-to-r from-blue-900/80 to-slate-800/80 border-blue-400 shadow-[0_0_20px_rgba(56,189,248,0.3)]' : 'bg-slate-800/80 border-yellow-400 shadow-lg')
+                        : 'bg-slate-900/50 border-slate-700 opacity-60'
+                    }`}
+                  >
+                    <div className={`p-3 rounded-xl ${isUnlocked ? (ach.id === 'too_blue_to_be_true' ? 'bg-blue-500/20 text-blue-400' : 'bg-yellow-500/20 text-yellow-400') : 'bg-slate-800 text-slate-600'}`}>
+                      {ach.id === 'too_blue_to_be_true' ? <Diamond className="w-8 h-8" /> : <Award className="w-8 h-8" />}
+                    </div>
+                    <div>
+                      <h3 className={`font-black text-lg ${isUnlocked ? (ach.id === 'too_blue_to_be_true' ? 'text-blue-300' : 'text-white') : 'text-slate-400'}`}>{displayTitle}</h3>
+                      <p className={`text-sm ${isUnlocked ? 'text-slate-300' : 'text-slate-500'}`}>{displayDesc}</p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <button
+              onClick={() => setGameState('MENU')}
+              className="mt-8 w-full py-4 px-6 bg-slate-800 hover:bg-slate-700 text-white rounded-xl font-black uppercase tracking-widest text-sm transition-all shadow-lg border-b-4 border-slate-900 active:translate-y-1 active:border-b-0"
+            >
+              Back to Menu
             </button>
           </motion.div>
         </div>
