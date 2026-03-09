@@ -695,58 +695,62 @@ export default function Game() {
             }
             const isDiamond = Math.random() < diamondChance; 
             
-            let color = '#38bdf8';
-            let points = 0;
-            let damage = 0;
-
-            if (isDiamond) {
-              const rand = Math.random();
-              if (rand < 0.078) { color = '#ef4444'; damage = 3; } // Red (3 dmg)
-              else if (rand < 0.196) { color = '#fcd34d'; damage = 2; } // Gold (2 dmg)
-              else if (rand < 0.431) { color = '#1d4ed8'; points = 5; } // Deep Blue
-              else if (rand < 0.686) { color = '#38bdf8'; points = 3; } // Normal Blue
-              else { color = '#bae6fd'; points = 1; } // Light Blue
-            }
+            const spawnCount = (!isDiamond && Math.random() < 0.15) ? 2 : 1;
             
-            let radius = isDiamond ? 16 : 20 + Math.random() * 25;
-            let speed = (3 + Math.random() * 4) * (1 + difficultyRef.current * 0.08) * speedMultiplier;
+            for (let i = 0; i < spawnCount; i++) {
+              let color = '#38bdf8';
+              let points = 0;
+              let damage = 0;
 
-            if (isDiamond) {
-              if (color === '#ef4444') {
-                radius *= 1.5;
-                speed *= 1.1;
-              } else if (color === '#fcd34d') {
-                radius *= 2;
-                speed *= 1.2;
+              if (isDiamond) {
+                const rand = Math.random();
+                if (rand < 0.078) { color = '#ef4444'; damage = 3; } // Red (3 dmg)
+                else if (rand < 0.196) { color = '#fcd34d'; damage = 2; } // Gold (2 dmg)
+                else if (rand < 0.431) { color = '#1d4ed8'; points = 5; } // Deep Blue
+                else if (rand < 0.686) { color = '#38bdf8'; points = 3; } // Normal Blue
+                else { color = '#bae6fd'; points = 1; } // Light Blue
               }
-            } else {
-              speed *= 1.05; // Rocks fall 5% faster
-              if (gameTimerRef.current > 60 && gameTimerRef.current <= 120) {
-                speed *= 1.3; // Buff rocks falling speed by 30%
-              }
-              if (radius > 35) {
-                speed *= 1.3; // Big rocks fall faster
-              }
-              if (radius < 25) {
-                damage = 0.5; // Very small rocks deal 0.5 hearts
+              
+              let radius = isDiamond ? 16 : 20 + Math.random() * 25;
+              let speed = (3 + Math.random() * 4) * (1 + difficultyRef.current * 0.08) * speedMultiplier;
+
+              if (isDiamond) {
+                if (color === '#ef4444') {
+                  radius *= 1.5;
+                  speed *= 1.1;
+                } else if (color === '#fcd34d') {
+                  radius *= 2;
+                  speed *= 1.2;
+                }
               } else {
-                damage = 1;
+                speed *= 1.10; // Rocks fall 10% faster (buffed by 5% from previous 1.05)
+                if (gameTimerRef.current > 60 && gameTimerRef.current <= 120) {
+                  speed *= 1.3; // Buff rocks falling speed by 30%
+                }
+                if (radius > 35) {
+                  speed *= 1.3; // Big rocks fall faster
+                }
+                if (radius < 25) {
+                  damage = 0.5; // Very small rocks deal 0.5 hearts
+                } else {
+                  damage = 1;
+                }
               }
+              
+              entitiesRef.current.push({
+                x: Math.random() * (canvas.width - 200) + 100,
+                y: -radius * 2,
+                radius,
+                speed,
+                rotation: Math.random() * Math.PI * 2,
+                rotSpeed: (Math.random() - 0.5) * 0.1,
+                type: isDiamond ? 'diamond' : 'rock',
+                color,
+                points,
+                damage,
+                vertices: isDiamond ? undefined : generateRockVertices(radius)
+              });
             }
-            
-            entitiesRef.current.push({
-              x: Math.random() * (canvas.width - 200) + 100,
-              y: -radius * 2,
-              radius,
-              speed,
-              rotation: Math.random() * Math.PI * 2,
-              rotSpeed: (Math.random() - 0.5) * 0.1,
-              type: isDiamond ? 'diamond' : 'rock',
-              color,
-              points,
-              damage,
-              vertices: isDiamond ? undefined : generateRockVertices(radius)
-            });
           }
         }
 
